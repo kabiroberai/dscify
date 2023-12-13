@@ -16,6 +16,7 @@ import Foundation
         try? FileManager.default.removeItem(at: destURL)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
 
+        // TODO: partialzip?
         let archive = try Archive(url: url, accessMode: .read)
         guard let manifestEntry = archive.first(where: { $0.path == "BuildManifest.plist" })
               else { throw StringError("Invalid IPSW: could not locate BuildManifest.plist") }
@@ -81,7 +82,6 @@ struct DSCExtractor {
 
         let extractor = developerDir.appending(path: "Platforms/iPhoneOS.platform/usr/lib/dsc_extractor.bundle")
         let handle = dlopen(extractor.path, RTLD_LAZY)
-        print("Ext: \(extractor.path)")
         guard let fun = dlsym(handle, "dyld_shared_cache_extract_dylibs_progress")
               else { throw StringError("Could not find dyld_shared_cache_extract_dylibs_progress")}
         self.extract = unsafeBitCast(fun, to: Extract.self)
