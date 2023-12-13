@@ -6,11 +6,13 @@ import Foundation
 struct Extract: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Extract symbols from an ipsw file.")
 
+    @Option var extractor: String?
+
     @Argument var path: String
     @Argument var destPath: String
 
     func run() async throws {
-        let extractor = try await DSCExtractor()
+        let extractor = try await DSCExtractor(path: extractor.map { URL(filePath: $0) })
 
         let url = URL(filePath: path)
         let destURL = URL(filePath: destPath)
@@ -73,21 +75,33 @@ struct DSCExtractor {
 
     private let extract: Extract
 
-    init() async throws {
-        let developerDirPipe = Pipe()
-        let developerDirProc = Process()
-        developerDirProc.executableURL = URL(filePath: "/usr/bin/xcode-select")
-        developerDirProc.arguments = ["-p"]
-        developerDirProc.standardOutput = developerDirPipe
-        async let bytesAsync = Data(developerDirPipe.fileHandleForReading.bytes)
-        try developerDirProc.run()
-        let developerDir = URL(filePath: String(decoding: try await bytesAsync, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
-        developerDirProc.waitUntilExit()
+    init(path: URL? = nil) async throws {
+        let extractor: URL
+        if let path {
+            extractor = path
+        } else {
+            let developerDirPipe = Pipe()
+            let developerDirProc = Process()
+            developerDirProc.executableURL = URL(filePath: "/usr/bin/xcode-select")
+            developerDirProc.arguments = ["-p"]
+            developerDirProc.standardOutput = developerDirPipe
+            async let bytesAsync = Data(developerDirPipe.fileHandleForReading.bytes)
+            try developerDirProc.run()
+            let developerDir = URL(filePath: String(decoding: try await bytesAsync, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+            developerDirProc.waitUntilExit()
+            extractor = developerDir.appending(path: "Platforms/iPhoneOS.platform/usr/lib/dsc_extractor.bundle")
+        }
 
-        let extractor = developerDir.appending(path: "Platforms/iPhoneOS.platform/usr/lib/dsc_extractor.bundle")
-        let handle = dlopen(extractor.path, RTLD_LAZY)
-        guard let fun = dlsym(handle, "dyld_shared_cache_extract_dylibs_progress")
-              else { throw StringError("Could not find dyld_shared_cache_extract_dylibs_progress")}
+        guard let handle = dlopen(extractor.path, RTLD_LAZY) else {
+            let error = String(cString: dlerror())
+            throw StringError("Could not load extractor: \(error)")
+        }
+
+        guard let fun = dlsym(handle, "dyld_shared_cache_extract_dylibs_progress") else {
+            let error = String(cString: dlerror())
+            throw StringError("Could not find dyld_shared_cache_extract_dylibs_progress: \(error)")
+        }
+
         self.extract = unsafeBitCast(fun, to: Extract.self)
     }
 
