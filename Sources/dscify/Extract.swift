@@ -3,7 +3,9 @@ import AsyncAlgorithms
 import ZIPFoundation
 import Foundation
 
-@main struct dscify: AsyncParsableCommand {
+struct Extract: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Extract symbols from an ipsw file.")
+
     @Argument var path: String
     @Argument var destPath: String
 
@@ -12,7 +14,7 @@ import Foundation
 
         let url = URL(filePath: path)
         let destURL = URL(filePath: destPath)
-        
+
         try? FileManager.default.removeItem(at: destURL)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
 
@@ -31,13 +33,13 @@ import Foundation
         guard let imageEntry = archive.first(where: { $0.path == path })
               else { throw StringError("SystemOS image was not found in archive") }
 
-        print("Extracting SystemOS...")
+        print("Unarchiving SystemOS...")
 
         let systemOSURL = destURL.appending(component: "SystemOS.dmg")
         guard try archive.extract(imageEntry, to: systemOSURL) == imageEntry.checksum
               else { throw StringError("Invalid IPSW: bad SystemOS checksum") }
 
-        print("Extracted! Mounting...")
+        print("Mounting...")
 
         let mountPoint = destURL.appending(component: "SystemOS")
 
@@ -46,6 +48,8 @@ import Foundation
         attach.arguments = ["attach", systemOSURL.path, "-mountpoint", mountPoint.path, "-nobrowse"]
         try attach.run()
         attach.waitUntilExit()
+
+        print("Expanding cache...")
 
         // TODO: Support other architectures
         let dsc = mountPoint.appending(path: "System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e")
@@ -121,12 +125,5 @@ struct Manifest: Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case buildIdentities = "BuildIdentities"
-    }
-}
-
-struct StringError: Error, CustomStringConvertible {
-    var description: String
-    init(_ description: String) {
-        self.description = description
     }
 }
