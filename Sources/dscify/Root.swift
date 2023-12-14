@@ -1,8 +1,7 @@
 import ArgumentParser
-import Foundation
 
 @main struct Root: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "dscify", subcommands: [Download.self, Extract.self, ExtractIPSW.self])
+    static let configuration = CommandConfiguration(commandName: "dscify", subcommands: [Download.self, Extract.self])
 }
 
 struct StringError: Error, CustomStringConvertible {

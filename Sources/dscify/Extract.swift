@@ -1,40 +1,39 @@
 import ArgumentParser
-import AsyncAlgorithms
 import Foundation
 
 struct Extract: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Extract symbols from a dyld_shared_cache.")
 
-    @Option var extractor: String?
+    @Option(name: .shortAndLong, help: "Path to dsc_extractor.bundle. Computed with xcrun by default.")
+    var extractor: String?
 
-    @Argument var path: String
-    @Argument var destPath: String
+    @Argument(help: ArgumentHelp("Path to dyld_shared_cache", discussion: "On newer OSes, this file should have sub-caches as siblings.")) var input: String
+    @Argument var output: String
 
     func run() async throws {
         let extractor = try await DSCExtractor(path: extractor.map { URL(filePath: $0) })
 
-        let url = URL(filePath: path)
-        let destURL = URL(filePath: destPath)
+        let url = URL(filePath: input)
+        let destURL = URL(filePath: output)
 
         try? FileManager.default.removeItem(at: destURL)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
 
         let progress = Progress()
-        try log("Preparing...\n")
-        let cancellable = progress.publisher(for: \.completedUnitCount, options: .new).sink { completed in
-            try? log("""
-            \rExtracting: \
-            \(progress.fractionCompleted.formatted(.percent.precision(.fractionLength(2)))) \
-            [\(progress.completedUnitCount)/\(progress.totalUnitCount)]
-            """)
+        log("Extracting...", newline: false)
+        let cancellable = progress.publisher(for: \.completedUnitCount, options: .new).sink { _ in
+            log(
+                """
+                \rExtracting: \
+                \(progress.fractionCompleted.formatted(.percent.precision(.fractionLength(2)))) \
+                [\(progress.completedUnitCount)/\(progress.totalUnitCount)]
+                """,
+                newline: false
+            )
         }
         extractor.extract(cache: url, output: destURL, progress: progress)
         cancellable.cancel()
-        try log("\n")
-    }
-
-    private func log(_ string: String) throws {
-        try FileHandle.standardError.write(contentsOf: Data(string.utf8))
+        log("")
     }
 }
 
@@ -50,15 +49,16 @@ struct DSCExtractor {
         } else {
             let developerDirPipe = Pipe()
             let developerDirProc = Process()
-            developerDirProc.executableURL = URL(filePath: "/usr/bin/xcode-select")
-            developerDirProc.arguments = ["-p"]
+            developerDirProc.executableURL = URL(filePath: "/usr/bin/xcrun")
+            developerDirProc.arguments = ["--show-sdk-platform-path", "--sdk", "iphoneos"]
             developerDirProc.standardOutput = developerDirPipe
             async let bytesAsync = Data(developerDirPipe.fileHandleForReading.bytes)
             try developerDirProc.run()
             let developerDir = URL(filePath: String(decoding: try await bytesAsync, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
             developerDirProc.waitUntilExit()
-            extractor = developerDir.appending(path: "Platforms/iPhoneOS.platform/usr/lib/dsc_extractor.bundle")
+            extractor = developerDir.appending(path: "usr/lib/dsc_extractor.bundle")
         }
+        log("Loading \(extractor.path)...")
 
         guard let handle = dlopen(extractor.path, RTLD_LAZY) else {
             let error = String(cString: dlerror())
@@ -86,4 +86,8 @@ struct DSCExtractor {
             progress.completedUnitCount = progress.totalUnitCount
         }
     }
+}
+
+private func log(_ string: some CustomStringConvertible, newline: Bool = true) {
+    try? FileHandle.standardError.write(contentsOf: Data("\(string)\(newline ? "\n" : "")".utf8))
 }
