@@ -4,20 +4,31 @@ import Foundation
 struct Extract: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Extract symbols from a dyld_shared_cache.")
 
-    @Option(name: .shortAndLong, help: "Path to dsc_extractor.bundle. Computed with xcrun by default.")
-    var extractor: String?
+    @Option(
+        name: .shortAndLong,
+        help: "Path to dsc_extractor.bundle. Computed with xcrun by default.",
+        completion: .file(extensions: ["bundle"]),
+        transform: { URL(filePath: $0) }
+    ) var extractor: URL?
 
-    @Argument(help: ArgumentHelp("Path to dyld_shared_cache", discussion: "On newer OSes, this file should have sub-caches as siblings.")) var input: String
-    @Argument var output: String
+    @Argument(
+        help: ArgumentHelp(
+            "Path to dyld_shared_cache.",
+            discussion: "On newer OSes, this file should have sub-caches as siblings."
+        ),
+        completion: .file(),
+        transform: { URL(filePath: $0) }
+    ) var input: URL
+
+    @Argument(
+        help: "Path to output directory.",
+        completion: .directory,
+        transform: { URL(filePath: $0) }
+    )
+    var output: URL
 
     func run() async throws {
-        let extractor = try await DSCExtractor(path: extractor.map { URL(filePath: $0) })
-
-        let url = URL(filePath: input)
-        let destURL = URL(filePath: output)
-
-        try? FileManager.default.removeItem(at: destURL)
-        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        let extractor = try await DSCExtractor(path: extractor)
 
         let progress = Progress()
         log("Extracting...", newline: false)
@@ -31,32 +42,36 @@ struct Extract: AsyncParsableCommand {
                 newline: false
             )
         }
-        extractor.extract(cache: url, output: destURL, progress: progress)
+        extractor.extract(cache: input, output: output, progress: progress)
         cancellable.cancel()
         log("")
     }
 }
 
 struct DSCExtractor {
-    private typealias Extract = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>, @convention(block) (CUnsignedInt, CUnsignedInt) -> Void) -> Void
+    private typealias ExtractFunc = @convention(c) (
+        UnsafePointer<CChar>,
+        UnsafePointer<CChar>,
+        @convention(block) (CUnsignedInt, CUnsignedInt) -> Void
+    ) -> Void
 
-    private let extract: Extract
+    private let extract: ExtractFunc
 
     init(path: URL? = nil) async throws {
         let extractor: URL
         if let path {
             extractor = path
         } else {
-            let developerDirPipe = Pipe()
-            let developerDirProc = Process()
-            developerDirProc.executableURL = URL(filePath: "/usr/bin/xcrun")
-            developerDirProc.arguments = ["--show-sdk-platform-path", "--sdk", "iphoneos"]
-            developerDirProc.standardOutput = developerDirPipe
-            async let bytesAsync = Data(developerDirPipe.fileHandleForReading.bytes)
-            try developerDirProc.run()
-            let developerDir = URL(filePath: String(decoding: try await bytesAsync, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
-            developerDirProc.waitUntilExit()
-            extractor = developerDir.appending(path: "usr/lib/dsc_extractor.bundle")
+            let xcrunPipe = Pipe()
+            let xcrun = Process()
+            xcrun.executableURL = URL(filePath: "/usr/bin/xcrun")
+            xcrun.arguments = ["--show-sdk-platform-path", "--sdk", "iphoneos"]
+            xcrun.standardOutput = xcrunPipe
+            async let platformRaw = Data(xcrunPipe.fileHandleForReading.bytes)
+            try xcrun.run()
+            let platform = URL(filePath: String(decoding: try await platformRaw.dropLast(), as: UTF8.self))
+            xcrun.waitUntilExit()
+            extractor = platform.appending(path: "usr/lib/dsc_extractor.bundle")
         }
         log("Loading \(extractor.path)...")
 
@@ -65,12 +80,12 @@ struct DSCExtractor {
             throw StringError("Could not load extractor: \(error)")
         }
 
-        guard let fun = dlsym(handle, "dyld_shared_cache_extract_dylibs_progress") else {
+        guard let extract = dlsym(handle, "dyld_shared_cache_extract_dylibs_progress") else {
             let error = String(cString: dlerror())
             throw StringError("Could not find dyld_shared_cache_extract_dylibs_progress: \(error)")
         }
 
-        self.extract = unsafeBitCast(fun, to: Extract.self)
+        self.extract = unsafeBitCast(extract, to: ExtractFunc.self)
     }
 
     func extract(cache: URL, output: URL, progress: Progress? = nil) {
