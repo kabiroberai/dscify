@@ -28,7 +28,8 @@ struct Extract: AsyncParsableCommand {
     var output: URL
 
     func run() async throws {
-        let extractor = try await DSCExtractor(path: extractor)
+        let extractor = try await DSCExtractor(bundle: extractor)
+        log("Loading \(extractor.bundle.path)...")
 
         let progress = Progress()
         let cancellable = progress.publisher(for: \.completedUnitCount, options: .new).sink { _ in
@@ -54,12 +55,12 @@ struct DSCExtractor {
         @convention(block) (CUnsignedInt, CUnsignedInt) -> Void
     ) -> Void
 
+    let bundle: URL
     private let extract: ExtractFunc
 
-    init(path: URL? = nil) async throws {
-        let extractor: URL
-        if let path {
-            extractor = path
+    init(bundle custom: URL? = nil) async throws {
+        if let custom {
+            bundle = custom
         } else {
             let xcrunPipe = Pipe()
             let xcrun = Process()
@@ -70,11 +71,10 @@ struct DSCExtractor {
             try xcrun.run()
             let platform = URL(filePath: String(decoding: try await platformRaw.dropLast(), as: UTF8.self))
             xcrun.waitUntilExit()
-            extractor = platform.appending(path: "usr/lib/dsc_extractor.bundle")
+            bundle = platform.appending(path: "usr/lib/dsc_extractor.bundle")
         }
-        log("Loading \(extractor.path)...")
 
-        guard let handle = dlopen(extractor.path, RTLD_LAZY) else {
+        guard let handle = dlopen(bundle.path, RTLD_LAZY) else {
             let error = String(cString: dlerror())
             throw StringError("Could not load extractor: \(error)")
         }
