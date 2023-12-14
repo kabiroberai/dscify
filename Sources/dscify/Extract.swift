@@ -31,7 +31,6 @@ struct Extract: AsyncParsableCommand {
         let extractor = try await DSCExtractor(path: extractor)
 
         let progress = Progress()
-        log("Extracting...", newline: false)
         let cancellable = progress.publisher(for: \.completedUnitCount, options: .new).sink { _ in
             log(
                 """
