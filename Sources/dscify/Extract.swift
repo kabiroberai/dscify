@@ -102,7 +102,3 @@ struct DSCExtractor {
         }
     }
 }
-
-private func log(_ string: some CustomStringConvertible, newline: Bool = true) {
-    try? FileHandle.standardError.write(contentsOf: Data("\(string)\(newline ? "\n" : "")".utf8))
-}
